@@ -407,7 +407,11 @@ def process_vision_info(
     if len(video_inputs) == 0:
         video_inputs = None
     if return_video_kwargs:
-        return image_inputs, video_inputs, {"fps": video_sample_fps_list, "n_fullframes": n_fullframes}
+        return (
+            image_inputs,
+            video_inputs,
+            {"fps": video_sample_fps_list, "n_fullframes": n_fullframes},
+        )
     return image_inputs, video_inputs
 
 
@@ -510,7 +514,7 @@ def process_video_info_torchcodec(
 
         if max_pixels_supposed > max_pixels:
             logger.warning(f"The given max_pixels[{max_pixels_supposed}] exceeds limit[{max_pixels}].")
-        
+
         max_pixels = min(max_pixels_supposed, max_pixels)
         resized_height, resized_width = smart_resize(
             height,

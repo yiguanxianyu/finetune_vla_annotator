@@ -22,7 +22,10 @@ if __name__ == "__main__":
     min_pixels = 256 * 28 * 28
     max_pixels = 1280 * 28 * 28
     processor = AutoProcessor.from_pretrained(
-        "Qwen/Qwen2.5-VL-3B-Instruct", min_pixels=min_pixels, max_pixels=max_pixels, use_fast=True
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+        use_fast=True,
     )
 
     messages = [
@@ -56,7 +59,9 @@ if __name__ == "__main__":
         generated_ids = model.generate(**inputs, max_new_tokens=2048)
         generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)]
         output_text = processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            generated_ids_trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
         )
     print(output_text)
     print(f"Total time: {time.time() - time1}s")

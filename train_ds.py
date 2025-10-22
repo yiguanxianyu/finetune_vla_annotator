@@ -29,7 +29,7 @@ def build_args() -> argparse.Namespace:
     parser.add_argument("--hf_model", type=str, default="Qwen/Qwen2.5-VL-3B-Instruct")
     parser.add_argument("--min_pixels", type=int, default=256 * 28 * 28)
     parser.add_argument("--max_pixels", type=int, default=1280 * 28 * 28)
-    parser.add_argument("--data_root", type=str, default=None, help="Dataset root containing task_info/observations.")
+    parser.add_argument("--data_root", type=str, default=None, help="Dataset root")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--shuffle", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--num_workers", type=int, default=0)
@@ -107,7 +107,11 @@ def main() -> None:
     torch.manual_seed(args.seed)
 
     processor = Qwen2_5_VLProcessor.from_pretrained(
-        args.hf_model, min_pixels=args.min_pixels, max_pixels=args.max_pixels, trust_remote_code=True, use_fast=True
+        args.hf_model,
+        min_pixels=args.min_pixels,
+        max_pixels=args.max_pixels,
+        trust_remote_code=True,
+        use_fast=True,
     )
     configure_processor(processor, args.min_pixels, args.max_pixels)
 

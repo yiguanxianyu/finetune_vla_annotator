@@ -29,7 +29,10 @@ messages1 = [
     {
         "role": "user",
         "content": [
-            {"type": "video", "video": "test_data/observations/616/843991/videos/head_color.mp4"},
+            {
+                "type": "video",
+                "video": "test_data/observations/616/843991/videos/head_color.mp4",
+            },
             {"type": "text", "text": "What are the common elements in these pictures?"},
         ],
     }
@@ -39,7 +42,11 @@ messages2 = [
     {
         "role": "user",
         "content": [
-            {"type": "video", "video": "test_data/observations/616/843991/videos/head_color.mp4", "fps": 1.1},
+            {
+                "type": "video",
+                "video": "test_data/observations/616/843991/videos/head_color.mp4",
+                "fps": 1.1,
+            },
             {"type": "text", "text": "What are the common elements in these pictures?"},
         ],
     },
