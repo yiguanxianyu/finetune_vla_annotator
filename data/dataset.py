@@ -52,7 +52,7 @@ def build_collator(processor):
 
         video_mask = inputs["input_ids"].eq(processor.video_token_id)
         rows, cols = torch.where(inputs["input_ids"] == im_start_id)
-        answer_start = cols.view(-1, bs)[:, -1] + 1
+        answer_start = cols.view(bs, -1)[:, -1] + 1
         text_label = inputs["input_ids"].clone()
         for b in range(bs):
             text_label[b, : answer_start[b]] = -100
@@ -65,6 +65,10 @@ def build_collator(processor):
             probs_end=probs_end,
             k_label=k_label,
         )
+
+        if "answer" in batch[0]:
+            # 评估时，保留答案部分用于计算精度
+            data["answer_texts"] = processor.tokenizer([item["answer"] for item in batch])["input_ids"]
 
         return inputs, BatchFeature(data=data, tensor_type="pt")
 
@@ -154,7 +158,12 @@ class ActionSample:
 
     def build_messages_with_gt(self) -> List[Dict[str, Any]]:
         messages = self.build_messages()
-        messages.append({"role": "assistant", "content": [{"type": "text", "text": self.assistant_text}]})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": self.assistant_text}],
+            }
+        )
         return messages
 
     def _resolve_path(self, path: str) -> str:
@@ -163,7 +172,9 @@ class ActionSample:
         return os.path.join(self.data_root, path)
 
 
-def _load_samples_from_root(dataset_root: Optional[str]) -> Optional[List[ActionSample]]:
+def _load_samples_from_root(
+    dataset_root: Optional[str],
+) -> Optional[List[ActionSample]]:
     root = Path(dataset_root)
     task_info_dir = root / "task_info"
     observations_dir = root / "observations"
@@ -202,7 +213,10 @@ def _load_samples_from_root(dataset_root: Optional[str]) -> Optional[List[Action
 
 
 def _get_sample_test():
-    warnings.warn("Using fallback example samples – please provide a valid dataset_root for training.", UserWarning)
+    warnings.warn(
+        "Using fallback example samples – please provide a valid dataset_root for training.",
+        UserWarning,
+    )
     # 示例样本，回退用
     default_path = "test_data/observations/616/843991/videos/head_color.mp4"
     default_json = """
@@ -249,6 +263,7 @@ class VideoActionDataset(Dataset):
         self,
         processor: AutoProcessor,
         dataset_root: Optional[str] = None,
+        max_samples=None,
     ):
         super().__init__()
         self.processor = processor
@@ -258,6 +273,8 @@ class VideoActionDataset(Dataset):
         if self.samples is None:
             # 回退到兼容旧脚本的示例样本
             self.samples = _get_sample_test()
+        if max_samples:
+            self.samples = random.sample(self.samples, k=max_samples)
 
         self.nframes = 30
 
@@ -269,7 +286,10 @@ class VideoActionDataset(Dataset):
             return self.load_sample(idx)
         except Exception as exc:  # noqa: BLE001
             idx = random.choice(range(len(self)))
-            warnings.warn(f"Failed to load sample {idx}, retrying with a different one: {exc}", UserWarning)
+            warnings.warn(
+                f"Failed to load sample {idx}, retrying with a different one: {exc}",
+                UserWarning,
+            )
             return self.load_sample(idx)
 
     def load_sample(self, idx: int) -> ActionSample:
@@ -288,6 +308,70 @@ class VideoActionDataset(Dataset):
 
         return dict(
             text=full_text,
+            video_input=video_input,
+            image_input=None,
+            num_frames=num_frames,
+            fps=fps_list[0],
+            probs_start=probs_start,
+            probs_end=probs_end,
+            K_label=k_label,
+        )
+
+
+class VideoActionDatasetForEval(Dataset):
+    """Dataset that mirrors官方 Qwen-VL fine-tuning预处理流程.不含目标输出"""
+
+    def __init__(
+        self,
+        processor: AutoProcessor,
+        dataset_root: Optional[str] = None,
+        max_samples=None,
+    ):
+        super().__init__()
+        self.processor = processor
+        self.video_token_id = self.processor.video_token_id
+
+        self.samples = _load_samples_from_root(dataset_root)
+        if self.samples is None:
+            # 回退到兼容旧脚本的示例样本
+            self.samples = _get_sample_test()
+        if max_samples:
+            self.samples = random.sample(self.samples, k=max_samples)
+
+        self.nframes = 30
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:  # noqa: D401
+        try:
+            return self.load_sample(idx)
+        except Exception as exc:  # noqa: BLE001
+            idx = random.choice(range(len(self)))
+            warnings.warn(
+                f"Failed to load sample {idx}, retrying with a different one: {exc}",
+                UserWarning,
+            )
+            return self.load_sample(idx)
+
+    def load_sample(self, idx: int) -> ActionSample:
+        messages = self.samples[idx].build_messages()
+        full_text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        answer = self.samples[idx].assistant_text
+
+        video_inputs, total_frames_list, fps_list = process_video_info_torchcodec(messages, nframes=self.nframes)
+        video_input = video_inputs[0]
+        num_frames = video_input.size(0)
+
+        probs_start, probs_end, k_label = _build_segment_targets(
+            assistant_text=self.samples[idx].assistant_text,
+            total_timesteps=num_frames,
+            n_fullframes=total_frames_list[0],
+        )
+
+        return dict(
+            text=full_text,
+            answer=answer,
             video_input=video_input,
             image_input=None,
             num_frames=num_frames,
@@ -353,19 +437,37 @@ def build_dataloader(
     shuffle: bool = False,
     num_workers: int = 0,
 ) -> DataLoader:
-    dataset = VideoActionDataset(
-        processor=processor,
-        dataset_root=dataset_root,
-    )
+    dataset = VideoActionDataset(processor=processor, dataset_root=dataset_root)
 
-    return dataset, DataLoader(
+    return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
         collate_fn=build_collator(processor),
         pin_memory=True,
-        persistent_workers=True,
+        persistent_workers=(num_workers > 0),
+    )
+
+
+def build_dataloader_for_eval(
+    processor: AutoProcessor,
+    *,
+    dataset_root: Optional[str] = None,
+    batch_size: int = 1,
+    shuffle: bool = False,
+    num_workers: int = 0,
+) -> DataLoader:
+    dataset = VideoActionDatasetForEval(processor=processor, dataset_root=dataset_root, max_samples=30)
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        collate_fn=build_collator(processor),
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
     )
 
 
