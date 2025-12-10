@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Training entry point for video action segmentation with QLoRA."""
 
 import argparse
 import time
@@ -10,18 +9,17 @@ from typing import Dict, List, Tuple
 import swanlab
 import torch
 from data.dataset import build_dataloader
-
 from models.qwen3_action_model import ActionSegmentationModel
 from tqdm import tqdm
-# from utils.eval import eval_lm
 
 from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
+# from utils.eval import eval_lm
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 def build_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Video Action Segmentation Training (Accelerate + QLoRA)")
+    parser = argparse.ArgumentParser(description="Video Action Segmentation Training (AMP)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--hf_model", type=str, default="Qwen/Qwen3-VL-2B-Instruct")
     parser.add_argument("--data_root", type=str, default="/mnt/e/AgiBotWorld-sub", help="Dataset root")
@@ -35,7 +33,7 @@ def build_args() -> argparse.Namespace:
     parser.add_argument("--embed_dim", type=int, default=2048)
     parser.add_argument("--kmax", type=int, default=16)
     parser.add_argument("--attn_implementation", type=str, default="flash_attention_2")
-    parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--lr", type=float, default=1e-5, help="Base learning rate")
     return parser.parse_args()
 
@@ -125,8 +123,8 @@ def train(model, dataloader, optimizer, processor, dataloader_eval, args):
 
 
 def main() -> None:
-    # torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.enabled = True
+    torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.allow_tf32 = True
     args = build_args()
 
