@@ -24,7 +24,7 @@ from transformers.processing_utils import VideosKwargs
 from transformers import AutoProcessor
 
 
-def build_collator(processor):
+def build_collator(processor, args=None):
     """Merge a list of samples into a single batched dict that the model can consume."""
     # pad_token_id = processor.tokenizer.pad_token_id
     im_start_id = processor.tokenizer.convert_tokens_to_ids("<|im_start|>")
@@ -38,7 +38,7 @@ def build_collator(processor):
         actions_count = [i["actions_count"] for i in batch]
         actions_segments = np.array([i["actions_segments"] for i in batch])
 
-        inputs, video_metadata = processor.apply_chat_template(
+        inputs_lm, video_metadata = processor.apply_chat_template(
             messages,
             tokenize=True,
             padding=True,
@@ -64,15 +64,15 @@ def build_collator(processor):
 
         segments_label = torch.from_numpy(np.concat(segments_label))
         actions_count_label = torch.tensor(actions_count)
-        video_mask = inputs["input_ids"].eq(processor.video_token_id)
+        video_mask = inputs_lm["input_ids"].eq(processor.video_token_id)
 
         # 遮盖输入部分
-        text_label = inputs["input_ids"].clone()
+        text_label = inputs_lm["input_ids"].clone()
         text_label[text_label == pad_token_id] = -100
 
         for b in range(bs):
             # 找到当前样本中所有 im_start_id 的位置索引
-            start_indices = torch.where(inputs["input_ids"][b] == im_start_id)[0]
+            start_indices = torch.where(inputs_lm["input_ids"][b] == im_start_id)[0]
             if len(start_indices) > 0:
                 # Mask 掉从开头到 answer_start 之前的所有内容
                 # 注意：这里 +1 是因为通常希望模型从 im_start_id 的下一个词开始预测
@@ -122,7 +122,15 @@ def build_collator(processor):
         #     # 评估时，保留答案部分用于计算精度
         #     data["answer_texts"] = processor.tokenizer([item["answer"] for item in batch])["input_ids"]
 
-        return inputs, label
+        # return inputs, label
+        return dict(
+            inputs_lm=inputs_lm,
+            text_label=text_label,
+            actions_count_label=actions_count_label,
+            segments_label=segments_label,
+            video_mask=video_mask,
+            num_frames=num_frames,
+        )
 
     return _collator
 
@@ -223,19 +231,13 @@ def _load_samples_from_root(dataset_root: Optional[str]):
 class VideoActionDataset(Dataset):
     def __init__(
         self,
-        processor: AutoProcessor,
         dataset_root: Optional[str] = None,
         max_samples=None,
     ):
         super().__init__()
-        self.processor = processor
-        self.video_token_id = self.processor.video_token_id
-
         self.samples = _load_samples_from_root(dataset_root)
         if max_samples:
             self.samples = random.sample(self.samples, k=max_samples)
-
-        self.nframes = 30
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -389,6 +391,7 @@ class VideoActionDataset(Dataset):
 
 #     num_segments = max(len(configs), 1)
 #     k_label = torch.tensor([num_segments - 1], dtype=torch.long)
+
 
 #     return probs_start, probs_end, k_label
 

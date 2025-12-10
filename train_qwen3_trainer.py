@@ -6,13 +6,12 @@ import time
 import warnings
 from typing import Dict, List, Tuple
 
-import swanlab
 import torch
-from data.dataset import build_dataloader
-from models.qwen3_action_model import ActionSegmentationModel
+from data.dataset import VideoActionDataset, build_collator
+from models.qwen3_action_model import ActionSegmentationModel, ActionSegmentationConfig
 from tqdm import tqdm
 
-from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor, Trainer, TrainingArguments
 
 # from utils.eval import eval_lm
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -22,25 +21,21 @@ def build_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Video Action Segmentation Training (AMP)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--hf_model", type=str, default="Qwen/Qwen3-VL-2B-Instruct")
+    parser.add_argument("--output_dir", type=str, default="output/qwen3_action_segmentation_2B")
     parser.add_argument("--data_root", type=str, default="/mnt/e/AgiBotWorld-sub", help="Dataset root")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--num_epochs", type=int, default=80)
-    parser.add_argument("--log_every", type=int, default=1)
+    parser.add_argument("--num_epochs", type=int, default=4)
+    parser.add_argument("--logging_steps", type=int, default=100)
     parser.add_argument("--eval_every", type=int, default=5)
     parser.add_argument("--weight_decay", type=float, default=0.005)
-    parser.add_argument("--save_dir", type=str, default="checkpoints_qora")
     parser.add_argument("--embed_dim", type=int, default=2048)
     parser.add_argument("--kmax", type=int, default=16)
     parser.add_argument("--attn_implementation", type=str, default="flash_attention_2")
-    parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-5, help="Base learning rate")
     return parser.parse_args()
-
-
-def build_optimizer(model, args: argparse.Namespace) -> Tuple[torch.optim.Optimizer, List[str]]:
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    return optimizer
 
 
 def build_model(args):
@@ -49,18 +44,12 @@ def build_model(args):
         args.hf_model,
         attn_implementation=args.attn_implementation,
         dtype=torch.bfloat16,
-        device_map="cuda:0",
+        device_map="auto",
         trust_remote_code=True,
     )
     base_model.config.use_cache = False
-    if args.gradient_checkpointing:
-        base_model.gradient_checkpointing_enable()
-
-    model = ActionSegmentationModel(
-        base_model=base_model,
-        embed_dim=args.embed_dim,
-        k_max=args.kmax,
-    ).to("cuda:0")
+    config = ActionSegmentationConfig()
+    model = ActionSegmentationModel(config, base_model=base_model, device_map="auto")
 
     return model, processor
 
@@ -107,19 +96,39 @@ def train_one_epoch(model, dataloader, optimizer):
     return data_epoch
 
 
-def train(model, dataloader, optimizer, processor, dataloader_eval, args):
-    # metrics = eval_lm(model, processor, dataloader_eval, accelerator)
-    # swanlab.log(metrics, step=0)
-    for epoch in range(1, args.num_epochs + 1):
-        data_epoch = train_one_epoch(model, dataloader, optimizer)
+def train(model, processor, dataset_train, args):
+    training_args = TrainingArguments(
+        seed=args.seed,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        gradient_checkpointing=args.gradient_checkpointing,
+        learning_rate=args.lr,
+        num_train_epochs=args.num_epochs,
+        weight_decay=args.weight_decay,
+        logging_steps=args.logging_steps,
+        output_dir=args.output_dir,
+        save_total_limit=2,
+        save_strategy="epoch",
+        bf16=True,
+        bf16_full_eval=True,
+        remove_unused_columns=False,
+        report_to=["swanlab"],
+        fsdp="auto_wrap",
+        fsdp_config={"fsdp_version": 2},
+        dataloader_num_workers=args.num_workers,
+        dataloader_persistent_workers=True,
+        dataloader_pin_memory=True,
+        # torch_compile=True,
+    )
 
-        # log_info = {}
-        # if epoch % args.log_every == 0:
-        #     log_info.update(data_epoch)
-        # if epoch % args.eval_every == 0:
-        #     metrics = eval_lm(model, processor, dataloader_eval, accelerator)
-        #     log_info.update(metrics)
-        # swanlab.log(log_info, step=epoch)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset_train,
+        data_collator=build_collator(processor),
+    )
+
+    trainer.train()
 
 
 def main() -> None:
@@ -127,36 +136,9 @@ def main() -> None:
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.allow_tf32 = True
     args = build_args()
-
-    # configure_processor(processor, args.min_pixels, args.max_pixels)
-    print(f"Processor loaded: {args.hf_model}")
     task_model, processor = build_model(args)
-
-    dataloader = build_dataloader(
-        processor=processor,
-        dataset_root=args.data_root,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        shuffle=True,
-    )
-    # dataloader_eval = build_dataloader_for_eval(
-    #     processor=processor,
-    #     dataset_root=args.data_root,
-    #     batch_size=1,
-    #     shuffle=False,
-    #     num_workers=0,
-    # )
-    print(f"Dataset and dataloader built with {len(dataloader.dataset)} samples.")
-    optimizer = build_optimizer(task_model, args)
-
-    _ = swanlab.init(
-        # 设置项目
-        project="my-project",
-        # 跟踪超参数与实验元数据
-        config=vars(args),
-    )
-
-    train(task_model, dataloader, optimizer, processor, dataloader, args)
+    dataset_train = VideoActionDataset(dataset_root=args.data_root)
+    train(task_model, processor, dataset_train, args)
 
 
 if __name__ == "__main__":
