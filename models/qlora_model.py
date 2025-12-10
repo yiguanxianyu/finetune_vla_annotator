@@ -11,7 +11,6 @@ from transformers import BitsAndBytesConfig, Qwen2_5_VLForConditionalGeneration
 
 from .action_model import ActionSegmentationModel
 
-
 DEFAULT_TARGET_MODULES = [
     "q_proj",
     "k_proj",

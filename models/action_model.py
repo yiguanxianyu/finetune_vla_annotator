@@ -79,8 +79,8 @@ class ActionSegmentationModel(nn.Module):
 
         total_loss = loss_start + loss_end + loss_k + self.alpha_text * loss_text_val
 
-        return {
-            "loss": total_loss,
+        return total_loss, {
+            "loss": total_loss.detach(),
             "loss_text": loss_text_val.detach(),
             "loss_start": loss_start.detach(),
             "loss_end": loss_end.detach(),
