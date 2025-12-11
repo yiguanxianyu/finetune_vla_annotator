@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
 
 
 class KHead(nn.Module):
@@ -39,6 +38,7 @@ class KHead(nn.Module):
         return logits
 
     def compute_loss(self, k_logits: torch.Tensor, k_labels: torch.Tensor) -> torch.Tensor:
+        assert max(k_labels) + 1 <= self.k_max, f"{k_labels}"
         k_logits = torch.stack(k_logits)
         loss_k = self.criterion(k_logits, k_labels)
         return loss_k

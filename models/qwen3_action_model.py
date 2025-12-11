@@ -9,6 +9,7 @@
 from typing import Any, Dict, Optional
 
 import torch
+from peft import LoraConfig, get_peft_model
 
 from transformers import PretrainedConfig, PreTrainedModel, Qwen3VLForConditionalGeneration
 
@@ -18,10 +19,18 @@ from .head import BoundaryHead, KHead
 class ActionSegmentationConfig(PretrainedConfig):
     model_type = "action-segmentation"
 
-    def __init__(self, embed_dim=2048, k_max=10, **kwargs):
+    def __init__(self, vlm, k_max=10, embed_dim=None, **kwargs):
         super().__init__(**kwargs)
-        self.embed_dim = embed_dim
         self.k_max = k_max
+        self.train_lora = True
+        self.vlm = vlm
+        if embed_dim is None:
+            if "2B" in vlm:
+                self.embed_dim = 2048
+            elif "4B" in vlm:
+                self.embed_dim = 2560
+            else:
+                raise ValueError(f"Unknown vlm model for embed_dim inference: {vlm}")
 
 
 class ActionSegmentationModel(PreTrainedModel):
@@ -32,9 +41,19 @@ class ActionSegmentationModel(PreTrainedModel):
     config_class = ActionSegmentationConfig
     supports_gradient_checkpointing = True
 
-    def __init__(self, config: ActionSegmentationConfig, base_model: Qwen3VLForConditionalGeneration, **kwargs):
+    def __init__(self, config: ActionSegmentationConfig, **kwargs):
         super().__init__(config, **kwargs)
-        self.qwen3vlmodel = base_model
+        self.qwen3vlmodel = Qwen3VLForConditionalGeneration.from_pretrained(
+            config.vlm,
+            attn_implementation="flash_attention_2",
+            dtype=torch.bfloat16,
+            device_map="auto",
+        )
+        self.qwen3vlmodel.config.use_cache = False
+
+        if config.train_lora:
+            self.qwen3vlmodel = load_lora_model(self.qwen3vlmodel, config)
+
         self.khead = KHead(embed_dim=config.embed_dim, k_max=config.k_max)
         self.bdhead = BoundaryHead(embed_dim=config.embed_dim)
 
@@ -89,6 +108,27 @@ class ActionSegmentationModel(PreTrainedModel):
             "loss_bound": loss_bound.detach(),
             "loss_K": loss_k.detach(),
         }
+
+    def generate(self, *args, **kwargs):
+        # First run get K and segments prediction heads if needed
+
+        return self.qwen3vlmodel.generate(*args, **kwargs)
+
+
+def load_lora_model(base_model: str, args):
+    lora_config = LoraConfig(
+        r=16,  # 秩
+        lora_alpha=16,  # alpha值
+        lora_dropout=0.1,
+        inference_mode=False,
+        target_modules=["q_proj", "v_proj"],
+        task_type="CAUSAL_LM",
+    )
+
+    peft_model = get_peft_model(base_model, lora_config)
+    peft_model.print_trainable_parameters()
+
+    return peft_model
 
 
 # class ActionSegmentationModel(nn.Module):

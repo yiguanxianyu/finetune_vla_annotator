@@ -12,7 +12,7 @@ import random
 import warnings
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -31,29 +31,36 @@ def build_collator(processor, args=None):
     pad_token_id = processor.tokenizer.pad_token_id
     use_soft_label = True
     guassian_sigma = 1
+    sample_frames = 5
 
     def _collator(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         bs = len(batch)
         messages = [i["messages"] for i in batch]
         actions_count = [i["actions_count"] for i in batch]
-        actions_segments = np.array([i["actions_segments"] for i in batch])
+        actions_segments = [i["actions_segments"] for i in batch]
 
-        inputs_lm, video_metadata = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            padding=True,
-            add_generation_prompt=False,
-            return_dict=True,
-            return_metadata=True,
-            return_tensors="pt",
-            videos_kwargs=VideosKwargs(fps=1),
-        )
+        try:
+            inputs_lm, video_metadata = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                padding=True,
+                add_generation_prompt=False,
+                return_dict=True,
+                return_metadata=True,
+                return_tensors="pt",
+                videos_kwargs=VideosKwargs(num_frames=sample_frames, fps=None),
+                # videos_kwargs=VideosKwargs(fps=1),
+            )
+        except Exception as e:
+            videos = [i["video_path"] for i in batch]
+            raise RuntimeError(f"Processor failed to process batch: {e}, videos: {videos}")
+
         num_frames = []
         segments_label = []
         for seg, meta in zip(actions_segments, video_metadata):
             num_frames_piece = len(meta.frames_indices)  # 对标签根据采样帧数量进行处理
             sample_rate = len(meta.frames_indices) / meta.total_num_frames
-            segment_processed = (seg * sample_rate).round().astype(int)
+            segment_processed = np.round(np.array(seg) * sample_rate).astype(int)
             label = np.zeros(num_frames_piece + 1)
             label[segment_processed] = 1
             if use_soft_label:
@@ -93,36 +100,6 @@ def build_collator(processor, args=None):
             tensor_type="pt",
         )
 
-        # rows, cols = torch.where(inputs["input_ids"] == im_start_id)
-        # answer_start = cols.view(bs, -1)[:, -1] + 1
-        # for b in range(bs):
-        #     text_label[b, : answer_start[b]] = -100
-        # 遮盖pad部分
-
-        # num_frames = 1
-        # # texts = [item["text"] for item in batch]
-        # # video_inputs = [item["video_input"] for item in batch]
-        # # image_inputs = [item["image_input"] for item in batch]
-        # num_frames = [item["num_frames"] for item in batch]
-        # fps_list = [item["fps"] for item in batch]
-        # probs_start = torch.stack([item["probs_start"] for item in batch], dim=0)
-        # probs_end = torch.stack([item["probs_end"] for item in batch], dim=0)
-        # k_label = torch.cat([item["K_label"] for item in batch], dim=0)
-
-        # data = dict(
-        #     num_frames=torch.tensor(num_frames),
-        #     video_mask=video_mask,
-        #     text_label=text_label,
-        #     probs_start=probs_start,
-        #     probs_end=probs_end,
-        #     k_label=k_label,
-        # )
-
-        # if "answer" in batch[0]:
-        #     # 评估时，保留答案部分用于计算精度
-        #     data["answer_texts"] = processor.tokenizer([item["answer"] for item in batch])["input_ids"]
-
-        # return inputs, label
         return dict(
             inputs_lm=inputs_lm,
             text_label=text_label,
@@ -198,7 +175,7 @@ class ActionSample:
 def _load_samples_from_root(dataset_root: Optional[str]):
     root = Path(dataset_root)
     task_info_dir = root / "task_info"
-    observations_dir = root / "observations"
+    observations_dir = root / "train"
 
     assert task_info_dir.exists(), f"Dataset root {dataset_root} must contain 'task_info' directories."
     assert observations_dir.exists(), f"Dataset root {dataset_root} must contain 'observations' directories."
@@ -262,29 +239,8 @@ class VideoActionDataset(Dataset):
             messages=messages,
             actions_count=actions_count,
             actions_segments=actions_segments,
+            video_path=self.samples[idx].video,
         )
-        # full_text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-
-        # video_inputs, total_frames_list, fps_list = process_video_info_torchcodec(messages, nframes=self.nframes)
-        # video_input = video_inputs[0]
-        # num_frames = video_input.size(0)
-
-        # probs_start, probs_end, k_label = _build_segment_targets(
-        #     assistant_text=self.samples[idx].label,
-        #     total_timesteps=num_frames,
-        #     n_fullframes=total_frames_list[0],
-        # )
-
-        # return dict(
-        #     text=full_text,
-        #     video_input=video_input,
-        #     image_input=None,
-        #     num_frames=num_frames,
-        #     fps=fps_list[0],
-        #     probs_start=probs_start,
-        #     probs_end=probs_end,
-        #     K_label=k_label,
-        # )
 
 
 # class VideoActionDatasetForEval(Dataset):
@@ -346,54 +302,6 @@ class VideoActionDataset(Dataset):
 #             probs_end=probs_end,
 #             K_label=k_label,
 #         )
-
-
-# def _build_segment_targets(
-#     assistant_text: str,
-#     total_timesteps: int,
-#     *,
-#     n_fullframes: int,
-# ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-#     """Generate boundary supervision from assistant JSON annotation."""
-
-#     try:
-#         annotation = json.loads(assistant_text)
-#     except json.JSONDecodeError as exc:  # noqa: F841
-#         raise ValueError("assistant_text must be a JSON string with label_info action_config.")
-
-#     configs: Iterable[Dict[str, Any]] = annotation.get("label_info", {}).get("action_config", [])
-#     configs = list(configs)
-#     if not configs:
-#         raise ValueError("annotation.label_info.action_config is empty – cannot build targets.")
-
-#     probs_start = torch.zeros(total_timesteps, dtype=torch.float32)
-#     probs_end = torch.zeros_like(probs_start)
-
-#     for seg in configs:
-#         start_frame = seg.get("start_frame")
-#         end_frame = seg.get("end_frame")
-#         if start_frame is None or end_frame is None:
-#             continue
-#         start_idx = int(round(start_frame * total_timesteps / max(n_fullframes, 1)))
-#         end_idx = int(round(end_frame * total_timesteps / max(n_fullframes, 1)))
-#         start_idx = min(max(start_idx, 0), total_timesteps - 1)
-#         end_idx = min(max(end_idx, 0), total_timesteps - 1)
-#         probs_start[start_idx] = 1.0
-#         probs_end[end_idx] = 1.0
-
-#     eps = 1e-8
-#     ps = gaussian_filter1d(probs_start.numpy(), sigma=1)
-#     pe = gaussian_filter1d(probs_end.numpy(), sigma=1)
-#     ps = ps / (ps.max() + eps)
-#     pe = pe / (pe.max() + eps)
-#     probs_start = torch.from_numpy(ps).float()
-#     probs_end = torch.from_numpy(pe).float()
-
-#     num_segments = max(len(configs), 1)
-#     k_label = torch.tensor([num_segments - 1], dtype=torch.long)
-
-
-#     return probs_start, probs_end, k_label
 
 
 def build_dataloader(

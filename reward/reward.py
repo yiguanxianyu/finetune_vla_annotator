@@ -5,20 +5,9 @@ from typing import List
 import json
 from sklearn.metrics import f1_score, jaccard_score
 
-# preds = ["这里写你的生成文本..."]
-# refs = ["我色出任何戳穿哼哧哼哧不知..."]
-# bertscore = evaluate.load("bertscore")
-# results = bertscore.compute(predictions=preds, references=refs, model_type="bert-base-multilingual-cased")
-
-# print(results)
 
 
-class RewardClass(nn.Module):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
-class BERTScoreReward(RewardClass):
+class BERTScoreReward(nn.Module):
     def __init__(self, model_type="facebook/bart-large", lang="en", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.bertscore = evaluate.load("bertscore")
@@ -34,7 +23,7 @@ class BERTScoreReward(RewardClass):
         return results
 
 
-class BoundaryReward(RewardClass):
+class BoundaryReward(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -69,7 +58,7 @@ class BoundaryReward(RewardClass):
         return dice
 
 
-class SegmentExpReward(RewardClass):
+class SegmentExpReward(nn.Module):
     def __init__(self, alpha=0.2, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.alpha = alpha
@@ -81,7 +70,7 @@ class SegmentExpReward(RewardClass):
         return rewards
 
 
-class SegmentQuadraticReward(RewardClass):
+class SegmentQuadraticReward(nn.Module):
     def __init__(self, alpha=0.01, base=1, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.alpha = alpha
@@ -94,7 +83,7 @@ class SegmentQuadraticReward(RewardClass):
         return rewards
 
 
-class JSONFormatReward(RewardClass):
+class JSONFormatReward(nn.Module):
     def __init__(self, pos_reward=0.5, neg_reward=-1.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_reward = pos_reward
@@ -116,7 +105,50 @@ class JSONFormatReward(RewardClass):
         return rewards
 
 
+class RewardModel(nn.Module):
+    def __init__(self, config, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config = config
+        self.BERTScoreReward = BERTScoreReward()
+        self.boundary_reward = BoundaryReward()
+        self.segment_exp_reward = SegmentExpReward()
+        self.segment_quadratic_reward = SegmentQuadraticReward()
+        self.json_reward = JSONFormatReward()
+
+    def forward(self, predictions, references):
+        bertscore_results = self.BERTScoreReward(predictions, references)["f1"]
+        boundary_dice = self.boundary_reward.boundary_to_segment(predictions)
+        segment_exp_rewards = self.segment_exp_reward(predictions, references)
+        # segment_quadratic_rewards = self.segment_quadratic_reward(predictions, references)
+        json_rewards = self.json_reward(predictions)
+
+        reward = (
+            self.config["bertscore_weight"] * bertscore_results
+            + self.config["boundary_dice_weight"] * boundary_dice
+            + self.config["segment_exp_weight"] * segment_exp_rewards.mean().item()
+            + self.config["json_weight"] * (sum(json_rewards) / len(json_rewards))
+        )
+        # self.config["segment_quadratic_weight"] * segment_quadratic_rewards.mean().item() + \
+
+        return {
+            "reward": reward,
+            "bertscore": bertscore_results,
+            "boundary_dice": boundary_dice,
+            "segment_exp_rewards": segment_exp_rewards,
+            # "segment_quadratic_rewards": segment_quadratic_rewards,
+            "json_rewards": json_rewards,
+        }
+
+
 if __name__ == "__main__":
+    
+    # preds = ["这里写你的生成文本..."]
+    # refs = ["我色出任何戳穿哼哧哼哧不知..."]
+    # bertscore = evaluate.load("bertscore")
+    # results = bertscore.compute(predictions=preds, references=refs, model_type="bert-base-multilingual-cased")
+
+    # print(results)
+    
     # input_list = [0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1]
     # 期望看到:   0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0
 
