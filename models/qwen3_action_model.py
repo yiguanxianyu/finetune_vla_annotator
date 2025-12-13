@@ -19,7 +19,7 @@ from .head import BoundaryHead, KHead
 class ActionSegmentationConfig(PretrainedConfig):
     model_type = "action-segmentation"
 
-    def __init__(self, vlm, k_max=10, embed_dim=None, **kwargs):
+    def __init__(self, vlm="Qwen/Qwen3-VL-2B-Instruct", k_max=10, embed_dim=None, **kwargs):
         super().__init__(**kwargs)
         self.k_max = k_max
         self.train_lora = True
@@ -63,11 +63,7 @@ class ActionSegmentationModel(PreTrainedModel):
     def forward(
         self,
         inputs_lm: Dict[str, torch.Tensor],
-        text_label: Optional[torch.Tensor] = None,
-        segments_label: torch.Tensor = None,
-        actions_count_label: torch.Tensor = None,
-        video_mask: torch.Tensor = None,
-        num_frames: torch.Tensor = None,
+        label_assist: Dict[str, torch.Tensor],
         **kwargs,
     ):
         """
@@ -76,6 +72,12 @@ class ActionSegmentationModel(PreTrainedModel):
         如果提供 labels（segments_label / actions_count_label），会返回 loss。
         否则返回 logits。
         """
+        text_label = label_assist["text_label"]
+        segments_label = label_assist["segments_label"]
+        actions_count_label = label_assist["actions_count_label"]
+        video_mask = label_assist["video_mask"]
+        num_frames = label_assist["num_frames"]
+
         base_out = self.qwen3vlmodel(
             **inputs_lm,
             labels=text_label,

@@ -2,16 +2,13 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import time
 import warnings
-from typing import Dict, List, Tuple
 
 import torch
 from data.dataset import VideoActionDataset, build_collator
-from models.qwen3_action_model import ActionSegmentationModel, ActionSegmentationConfig, load_lora_model
-from tqdm import tqdm
+from models.qwen3_action_model import ActionSegmentationConfig, ActionSegmentationModel
 
-from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor, Trainer, TrainingArguments
+from transformers import Qwen3VLProcessor, Trainer, TrainingArguments
 
 # from utils.eval import eval_lm
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -24,14 +21,14 @@ def build_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default="output/qwen3_action_segmentation_2B")
     parser.add_argument("--data_root", type=str, default="/mnt/e/observations_sub", help="Dataset root")
     parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--num_workers", type=int, default=2)
+    parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--num_epochs", type=int, default=2)
     parser.add_argument("--logging_steps", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=5)
     parser.add_argument("--weight_decay", type=float, default=0.005)
     parser.add_argument("--embed_dim", type=int, default=2048)
     parser.add_argument("--kmax", type=int, default=24)
-    parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-5, help="Base learning rate")
     parser.add_argument("--use_lora", type=bool, default=True, help="Whether to use LoRA")

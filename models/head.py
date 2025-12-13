@@ -88,7 +88,7 @@ class BoundaryHead(nn.Module):
         B = len(hidden_states)
         per_sample_logits = []
         for b in range(B):
-            T = int(num_frames[b]) + 1
+            T = int(num_frames[b])
             vid_feats = hidden_states[b]  # [N_v, D]
             tok = self.token_proj(vid_feats)  # [N_v, C]
             tok = tok.transpose(0, 1).unsqueeze(0)  # [1, C, N_v]
