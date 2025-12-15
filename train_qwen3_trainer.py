@@ -52,7 +52,7 @@ def build_model(args):
     return model, processor
 
 
-def train(model, processor, dataset_train, args):
+def train(model, processor, dataset_train, dataset_eval, args):
     training_args = TrainingArguments(
         seed=args.seed,
         per_device_train_batch_size=args.batch_size,
@@ -82,6 +82,7 @@ def train(model, processor, dataset_train, args):
         model=model,
         args=training_args,
         train_dataset=dataset_train,
+        eval_dataset=dataset_eval,
         data_collator=build_collator(processor),
         compute_metrics=compute_metrics,
     )
@@ -104,8 +105,9 @@ def main() -> None:
     torch.set_float32_matmul_precision("medium")
     args = build_args()
     task_model, processor = build_model(args)
-    dataset_train = VideoActionDataset(dataset_root=args.data_root)
-    train(task_model, processor, dataset_train, args)
+    dataset_train = VideoActionDataset(dataset_root=args.data_root, split="train")
+    dataset_eval = VideoActionDataset(dataset_root=args.data_root, split="val")
+    train(task_model, processor, dataset_train, dataset_eval, args)
 
 
 if __name__ == "__main__":

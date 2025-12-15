@@ -290,12 +290,10 @@ def build_collator(processor, args=None):
 
 
 class VideoActionDataset(Dataset):
-    def __init__(
-        self,
-        dataset_root: Optional[str] = None,
-        max_samples=None,
-    ):
+    def __init__(self, dataset_root: Path | str, split: str, max_samples=None):
         super().__init__()
+        assert split in ["train", "val", "test"], f"Unsupported split: {split}"
+        self.split = split
         self.samples = self.load_samples_from_root(dataset_root)
         if max_samples:
             self.samples = random.sample(self.samples, k=max_samples)
@@ -319,11 +317,10 @@ class VideoActionDataset(Dataset):
             video_path=self.samples[idx].video,
         )
 
-    @staticmethod
-    def load_samples_from_root(dataset_root: Optional[str]):
+    def load_samples_from_root(self, dataset_root: Path | str) -> List[ActionSample]:
         root = Path(dataset_root)
         task_info = root / "task_info/task_episode_key.json"
-        observations_dir = root / "train"
+        observations_dir = root / self.split
 
         assert task_info.exists(), FileNotFoundError(f"Dataset root {dataset_root} must contain task_info")
         assert observations_dir.exists(), FileNotFoundError(
