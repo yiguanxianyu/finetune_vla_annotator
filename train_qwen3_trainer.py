@@ -35,6 +35,12 @@ def build_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def compute_metrics(preditions):
+    print("Computing metrics...")
+    print(preditions)
+    return {"k_accuracy": 0.9, "seg_accuracy": 0.8}
+
+
 def build_model(args):
     processor = Qwen3VLProcessor.from_pretrained(args.hf_model, trust_remote_code=True, use_fast=True)
     config = ActionSegmentationConfig(
@@ -69,7 +75,7 @@ def train(model, processor, dataset_train, args):
         dataloader_num_workers=args.num_workers,
         dataloader_persistent_workers=(args.num_workers > 0),
         dataloader_pin_memory=True,
-        # torch_compile=True, torchcompile 不兼容flash attention
+        # torch_compile=True, torch.compile 不兼容flash attention
     )
 
     trainer = Trainer(
@@ -77,6 +83,7 @@ def train(model, processor, dataset_train, args):
         args=training_args,
         train_dataset=dataset_train,
         data_collator=build_collator(processor),
+        compute_metrics=compute_metrics,
     )
 
     trainer.train()

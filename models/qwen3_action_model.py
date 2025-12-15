@@ -87,14 +87,28 @@ class ActionSegmentationModel(PreTrainedModel):
         hidden_states = base_out.hidden_states[-1]
         video_hidden_states = [hs[vm] for hs, vm in zip(hidden_states, video_mask)]
 
-        k_logits = self.khead(video_hidden_states)
-        seg_logits = self.bdhead(video_hidden_states, num_frames)
+        k_logits = self.khead(video_hidden_states)  # list (B, k_max)
+        seg_logits = self.bdhead(video_hidden_states, num_frames)  # list (B, T)
 
         # 如果没有标签 → 推理模式
         if segments_label is None or actions_count_label is None:
+            k_preds = torch.argmax(torch.stack(k_logits), dim=-1)
+            seg_preds = []
+            for k, seg in zip(k_preds, seg_logits):
+                temp = seg.topk(k.item()).indices.sort().values
+                seg_preds.append(temp)
+
             return {
-                "loss": None,
-                "text_loss": base_out.loss,
+                "loss_text": base_out.loss,
+                "logits": {
+                    "k_logits": k_logits,
+                    "seg_logits": seg_logits,
+                    "text_logits": base_out.logits,
+                },
+                "predictions": {
+                    "k_preds": k_preds,
+                    "seg_preds": seg_preds,
+                },
             }
 
         # 有监督 → 计算 loss
