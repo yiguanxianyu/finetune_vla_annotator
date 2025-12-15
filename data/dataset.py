@@ -101,7 +101,7 @@ def build_collator(processor, args=None):
     use_soft_label = True
     guassian_sigma = 1
     fps = None
-    _sample_frames = 5
+    _sample_frames = 30
 
     # new version collator
     def new_collator(batch: List[ActionSample]):

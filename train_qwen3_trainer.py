@@ -20,16 +20,16 @@ def build_args() -> argparse.Namespace:
     parser.add_argument("--hf_model", type=str, default="Qwen/Qwen3-VL-2B-Instruct")
     parser.add_argument("--output_dir", type=str, default="output/qwen3_action_segmentation_2B")
     parser.add_argument("--data_root", type=str, default="/mnt/e/observations_sub", help="Dataset root")
-    parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--num_epochs", type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--logging_steps", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=5)
     parser.add_argument("--weight_decay", type=float, default=0.005)
     parser.add_argument("--embed_dim", type=int, default=2048)
     parser.add_argument("--kmax", type=int, default=24)
     parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-5, help="Base learning rate")
     parser.add_argument("--use_lora", type=bool, default=True, help="Whether to use LoRA")
     return parser.parse_args()
@@ -58,7 +58,7 @@ def train(model, processor, dataset_train, args):
         weight_decay=args.weight_decay,
         logging_steps=args.logging_steps,
         output_dir=args.output_dir,
-        save_total_limit=2,
+        save_total_limit=3,
         save_strategy="epoch",
         bf16=True,
         bf16_full_eval=True,
@@ -93,6 +93,8 @@ def main() -> None:
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.set_float32_matmul_precision("medium")
     args = build_args()
     task_model, processor = build_model(args)
     dataset_train = VideoActionDataset(dataset_root=args.data_root)
