@@ -4,6 +4,7 @@
 import argparse
 import warnings
 
+import numpy as np
 import torch
 from data.dataset import VideoActionDataset, build_collator
 from models.qwen3_action_model import ActionSegmentationConfig, ActionSegmentationModel
@@ -21,10 +22,10 @@ def build_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default="output/qwen3_action_segmentation_2B")
     parser.add_argument("--data_root", type=str, default="/mnt/e/observations_sub", help="Dataset root")
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--logging_steps", type=int, default=10)
-    parser.add_argument("--eval_every", type=int, default=5)
+    parser.add_argument("--eval_every", type=int, default=100)
     parser.add_argument("--weight_decay", type=float, default=0.005)
     parser.add_argument("--embed_dim", type=int, default=2048)
     parser.add_argument("--kmax", type=int, default=24)
@@ -35,10 +36,26 @@ def build_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def compute_metrics(preditions):
-    print("Computing metrics...")
-    print(preditions)
-    return {"k_accuracy": 0.9, "seg_accuracy": 0.8}
+def compute_metrics(eval_pred):
+    preditions, label_ids = eval_pred
+    k_pred = preditions[3]
+    seg_pred = preditions[4]
+    k_label = label_ids["actions_count_label"]
+    seg_label = label_ids["segments_label"].astype(int)
+
+    loss_text = preditions[0].mean().item()
+    loss_bound = preditions[1].mean().item()
+    loss_K = preditions[2].mean().item()
+
+    k_sse = ((k_pred - k_label) ** 2).mean().item()
+    seg_acc = np.mean(seg_pred != seg_label)
+
+    return {"loss_text": loss_text, "loss_bound": loss_bound, "loss_K": loss_K, "k_sse": k_sse, "seg_hamming": seg_acc}
+
+
+def preprocess_logits_for_metrics(logits, labels):
+    # Loss, k_preds, seg_preds
+    return logits[0:5]  # 只返回 loss_text, loss_bound, loss_K, k_preds, seg_preds
 
 
 def build_model(args):
@@ -56,16 +73,18 @@ def train(model, processor, dataset_train, dataset_eval, args):
     training_args = TrainingArguments(
         seed=args.seed,
         per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=1,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         gradient_checkpointing=args.gradient_checkpointing,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         learning_rate=args.lr,
         num_train_epochs=args.num_epochs,
+        eval_strategy="epoch",
         weight_decay=args.weight_decay,
         logging_steps=args.logging_steps,
         output_dir=args.output_dir,
         save_total_limit=3,
-        save_strategy="epoch",
+        save_strategy="epoch", 
         bf16=True,
         bf16_full_eval=True,
         remove_unused_columns=False,
@@ -85,6 +104,7 @@ def train(model, processor, dataset_train, dataset_eval, args):
         eval_dataset=dataset_eval,
         data_collator=build_collator(processor),
         compute_metrics=compute_metrics,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
 
     trainer.train()

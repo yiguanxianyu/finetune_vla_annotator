@@ -24,10 +24,9 @@ from transformers import AutoProcessor
 import copy
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant that help people exactly find the action segments in the video."
-DEFAULT_USER_INSTRUCTION = "Describe this video in json format."
+DEFAULT_USER_INSTRUCTION = "Describe this video in json format. Ensure that the segments are non-overlapping and cover the entire video from start to end."
 
 DEFAULT_LABEL = "It is known that this video can be divided into {} segments. "
-"Ensure that the segments are non-overlapping and cover the entire video from start to end."
 
 
 class ActionSample:
@@ -68,9 +67,10 @@ class ActionSample:
     def text_label(self):
         return DEFAULT_LABEL.format(self.actions_count)
 
-    def build_messages_with_gt(self, frame_sample_rate=1) -> List[Dict[str, Any]]:
+    def build_messages_with_gt(self, frame_sample_rate=1, use_text_label=True) -> List[Dict[str, Any]]:
         messages = copy.deepcopy(self._system_messages)
-        messages[1]["content"].append({"type": "text", "text": self.text_label})
+        if use_text_label:
+            messages[1]["content"].append({"type": "text", "text": self.text_label})
 
         label = copy.deepcopy(self.label)
         for piece in label["label_info"]["action_config"]:
@@ -94,6 +94,56 @@ class ActionSample:
         return frame_seq[1:]
 
 
+def build_collator_text_only(processor, args=None):
+    im_start_id = processor.tokenizer.convert_tokens_to_ids("<|im_start|>")
+    fps = None
+    _sample_frames = 8
+
+    # text only collator
+    def collator(batch: List[ActionSample]):
+        messages = []
+        for b in batch:
+            meta = b.video_meta
+            local_sample_frames = _sample_frames
+            if fps is not None:
+                local_sample_frames = round(meta.end_stream_seconds_from_content * fps)
+            # Video sampling start from 0 and end at num_frames,so frame_sample_rate segments to num_frames - 1
+            frame_sample_rate = (local_sample_frames - 1) / meta.num_frames
+            message = b.build_messages_with_gt(frame_sample_rate=frame_sample_rate, use_text_label=False)
+            messages.append(message)
+
+        if fps:
+            video_kwargs = VideosKwargs(fps=fps)
+        else:
+            video_kwargs = VideosKwargs(num_frames=_sample_frames, fps=None)
+
+        # Make batched inputs for VLM
+        inputs_lm = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            padding=True,
+            add_generation_prompt=False,
+            return_dict=True,
+            return_tensors="pt",
+            videos_kwargs=video_kwargs,
+        )
+        # 遮盖输入部分
+        text_label = inputs_lm["input_ids"].clone()
+
+        for b in range(len(batch)):
+            # 找到当前样本中所有 im_start_id 的位置索引
+            start_indices = torch.where(inputs_lm["input_ids"][b] == im_start_id)[0]
+
+            # Mask 掉从开头到 answer_start 之前的所有内容
+            # 注意：这里 +1 是因为通常希望模型从 im_start_id 的下一个词开始预测
+            answer_start = start_indices[-1] + 1
+            text_label[b, :answer_start] = -100
+
+        return inputs_lm, text_label
+
+    return collator
+
+
 def build_collator(processor, args=None):
     """Merge a list of samples into a single batched dict that the model can consume."""
     im_start_id = processor.tokenizer.convert_tokens_to_ids("<|im_start|>")
@@ -101,7 +151,7 @@ def build_collator(processor, args=None):
     use_soft_label = True
     guassian_sigma = 1
     fps = None
-    _sample_frames = 30
+    _sample_frames = 8
 
     # new version collator
     def new_collator(batch: List[ActionSample]):
@@ -162,12 +212,11 @@ def build_collator(processor, args=None):
             answer_start = start_indices[-1] + 1
             text_label[b, :answer_start] = -100
 
-        label_assist = BatchFeature(
+        labels = BatchFeature(
             data=dict(
                 text_label=text_label,
                 actions_count_label=actions_count_label,
                 segments_label=segments_label,
-                video_mask=video_mask,
                 num_frames=num_frames,
             ),
             tensor_type="pt",
@@ -175,7 +224,8 @@ def build_collator(processor, args=None):
 
         return dict(
             inputs_lm=inputs_lm,
-            label_assist=label_assist,
+            video_mask=video_mask,
+            labels=labels,
         )
 
     def _collator(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -254,39 +304,6 @@ def build_collator(processor, args=None):
         )
 
     return new_collator
-
-
-# def _load_samples_from_root_legacy(dataset_root: Optional[str]):
-#     root = Path(dataset_root)
-#     task_info_dir = root / "task_info"
-#     observations_dir = root / "train"
-
-#     assert task_info_dir.exists(), f"Dataset root {dataset_root} must contain 'task_info' directories."
-#     assert observations_dir.exists(), f"Dataset root {dataset_root} must contain 'observations' directories."
-#     data = {}
-#     samples = []
-#     for ep in observations_dir.rglob("**/head_color.mp4"):
-#         parts = ep.parts
-#         task_id = parts[-4]
-#         episode_id = parts[-3]
-#         data.setdefault(task_id, {})[episode_id] = str(ep.resolve())
-#     key_order = ["task_name", "init_scene_text", "label_info"]
-#     for key, val in data.items():
-#         task_json = task_info_dir / f"task_{key}.json"
-#         records = json.loads(task_json.read_text(encoding="utf-8"))
-#         for record in records:
-#             episode_id = str(record["episode_id"])
-#             if episode_id not in val or episode_id is None:
-#                 continue
-
-#             ordered_record = OrderedDict((k, record[k]) for k in key_order)
-#             sample = ActionSample(video=val[episode_id], label=ordered_record)
-#             samples.append(sample)
-
-#     if not samples:
-#         raise ValueError(f"No valid samples discovered under dataset root: {dataset_root}")
-
-#     return samples
 
 
 class VideoActionDataset(Dataset):
