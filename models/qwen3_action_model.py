@@ -6,14 +6,18 @@
 - 在 forward 内部计算文本/边界/段数等多任务损失，并返回总损失与各项子损失。
 """
 
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Dict, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
-from dataclasses import dataclass
-from transformers import PretrainedConfig, PreTrainedModel, Qwen3VLForConditionalGeneration
-from transformers.modeling_outputs import ModelOutput
+from transformers import (
+    PretrainedConfig,
+    PreTrainedModel,
+    Qwen3VLForConditionalGeneration,
+)
 from transformers.cache_utils import Cache
+from transformers.modeling_outputs import ModelOutput
 
 from .head import BoundaryHead, KHead
 

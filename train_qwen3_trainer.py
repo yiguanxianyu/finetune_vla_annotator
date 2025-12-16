@@ -6,10 +6,10 @@ import warnings
 
 import numpy as np
 import torch
+from transformers import Qwen3VLProcessor, Trainer, TrainingArguments
+
 from data.dataset import VideoActionDataset, build_collator
 from models.qwen3_action_model import ActionSegmentationConfig, ActionSegmentationModel
-
-from transformers import Qwen3VLProcessor, Trainer, TrainingArguments
 
 # from utils.eval import eval_lm
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -47,10 +47,10 @@ def compute_metrics(eval_pred):
     loss_bound = preditions[1].mean().item()
     loss_K = preditions[2].mean().item()
 
-    k_sse = ((k_pred - k_label) ** 2).mean().item()
-    seg_acc = np.mean(seg_pred != seg_label)
+    k_sse = ((k_pred - k_label) ** 2).mean().item() ** 0.5
+    seg_acc = np.mean(seg_pred == seg_label)
 
-    return {"loss_text": loss_text, "loss_bound": loss_bound, "loss_K": loss_K, "k_sse": k_sse, "seg_hamming": seg_acc}
+    return {"loss_text": loss_text, "loss_bound": loss_bound, "loss_K": loss_K, "k_sse": k_sse, "seg_acc": seg_acc}
 
 
 def preprocess_logits_for_metrics(logits, labels):
@@ -84,7 +84,7 @@ def train(model, processor, dataset_train, dataset_eval, args):
         logging_steps=args.logging_steps,
         output_dir=args.output_dir,
         save_total_limit=3,
-        save_strategy="epoch", 
+        save_strategy="epoch",
         bf16=True,
         bf16_full_eval=True,
         remove_unused_columns=False,

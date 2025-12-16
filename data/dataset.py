@@ -6,22 +6,23 @@
 - 与官方 Qwen-VL fine-tune 代码保持相同的消息/视频预处理流程。
 """
 
+import copy
 import json
 import random
 from collections import OrderedDict
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 from functools import cached_property
+from pathlib import Path
+from typing import Any, Dict, List
+
 import numpy as np
 import torch
 from scipy.ndimage import gaussian_filter1d
 from torch.utils.data import DataLoader, Dataset
+from torchcodec.decoders import VideoDecoder
 from tqdm import tqdm
+from transformers import AutoProcessor
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.processing_utils import VideosKwargs
-from torchcodec.decoders import VideoDecoder
-from transformers import AutoProcessor
-import copy
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant that help people exactly find the action segments in the video."
 DEFAULT_USER_INSTRUCTION = "Describe this video in json format. Ensure that the segments are non-overlapping and cover the entire video from start to end."

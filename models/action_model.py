@@ -6,7 +6,8 @@
 - 在 forward 内部计算文本/边界/段数等多任务损失，并返回总损失与各项子损失。
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

@@ -1,11 +1,11 @@
-import time
 import os
+import time
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
-from transformers import AutoProcessor, Qwen2_5_VLProcessor, Qwen2_5_VLForConditionalGeneration
-from vision_process import process_vision_info
 import torch
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from vision_process import process_vision_info
 
 if __name__ == "__main__":
     # default processer

@@ -1,10 +1,10 @@
+import json
+from typing import List
+
 import evaluate
 import torch
-from torch import nn
-from typing import List
-import json
 from sklearn.metrics import f1_score, jaccard_score
-
+from torch import nn
 
 
 class BERTScoreReward(nn.Module):
@@ -141,14 +141,13 @@ class RewardModel(nn.Module):
 
 
 if __name__ == "__main__":
-    
     # preds = ["这里写你的生成文本..."]
     # refs = ["我色出任何戳穿哼哧哼哧不知..."]
     # bertscore = evaluate.load("bertscore")
     # results = bertscore.compute(predictions=preds, references=refs, model_type="bert-base-multilingual-cased")
 
     # print(results)
-    
+
     # input_list = [0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1]
     # 期望看到:   0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0
 
