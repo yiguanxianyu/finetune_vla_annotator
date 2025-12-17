@@ -6,20 +6,24 @@
 - 在 forward 内部计算文本/边界/段数等多任务损失，并返回总损失与各项子损失。
 """
 
+import copy
 from dataclasses import dataclass
 from typing import Dict, Optional
 
 import torch
 from peft import LoraConfig, get_peft_model
+from transformers.cache_utils import Cache
+from transformers.modeling_outputs import ModelOutput
+
 from transformers import (
     PretrainedConfig,
     PreTrainedModel,
     Qwen3VLForConditionalGeneration,
 )
-from transformers.cache_utils import Cache
-from transformers.modeling_outputs import ModelOutput
 
 from .head import BoundaryHead, KHead
+
+DEFAULT_SEGMENT_PROMPT = "It is known that this video can be divided into {} segments. "
 
 
 @dataclass
@@ -93,6 +97,7 @@ class ActionSegmentationModel(PreTrainedModel):
 
         self.khead = KHead(embed_dim=config.embed_dim, k_max=config.k_max)
         self.bdhead = BoundaryHead(embed_dim=config.embed_dim)
+        self.segment_prompt = DEFAULT_SEGMENT_PROMPT
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
         self.qwen3vlmodel.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
@@ -168,10 +173,119 @@ class ActionSegmentationModel(PreTrainedModel):
                 rope_deltas=base_out.rope_deltas,
             )
 
-    def generate(self, *args, **kwargs):
-        # First run get K and segments prediction heads if needed
+    @torch.inference_mode()
+    def _predict_heads(self, inputs_lm: Dict[str, torch.Tensor], video_mask: torch.Tensor, num_frames=None):
+        base_out = self.qwen3vlmodel(
+            **inputs_lm,
+            output_hidden_states=True,
+            use_cache=False,
+        )
 
-        return self.qwen3vlmodel.generate(*args, **kwargs)
+        hidden_states = base_out.hidden_states[-1]
+        video_hidden_states = [hs[vm] for hs, vm in zip(hidden_states, video_mask)]
+
+        k_logits = self.khead(video_hidden_states)
+        k_preds = torch.argmax(torch.stack(k_logits), dim=-1)
+
+        if num_frames is None:
+            num_frames = video_mask.sum(dim=1)
+        seg_logits = self.bdhead(video_hidden_states, num_frames)
+
+        seg_preds = []
+        for idx, logits in enumerate(seg_logits):
+            seg_preds.append(self.top_k_mask(logits, int(k_preds[idx].item()) + 1))
+        seg_preds = torch.stack(seg_preds)
+        return k_preds, seg_preds
+
+    def _inject_segment_prompt(self, messages, k_preds: torch.Tensor):
+        injected_messages = []
+        for msg, k in zip(messages, k_preds.tolist()):
+            piece = copy.deepcopy(msg)
+            prompt_text = self.segment_prompt.format(int(k))
+            inserted = False
+            for turn in piece:
+                if turn.get("role") == "user":
+                    turn["content"].append({"type": "text", "text": prompt_text})
+                    inserted = True
+                    break
+            if not inserted:
+                piece.append({"role": "user", "content": [{"type": "text", "text": prompt_text}]})
+            injected_messages.append(piece)
+        return injected_messages
+
+    @torch.inference_mode()
+    def generate(
+        self,
+        processor,
+        messages,
+        videos_kwargs=None,
+        return_text=True,
+        append_boundaries=True,
+        **generate_kwargs,
+    ):
+        device = next(self.qwen3vlmodel.parameters()).device
+
+        head_inputs, metadata = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            padding=True,
+            add_generation_prompt=False,
+            return_dict=True,
+            return_tensors="pt",
+            return_metadata=True,
+            videos_kwargs=videos_kwargs,
+        )
+
+        video_mask = head_inputs["input_ids"].eq(processor.video_token_id).to(device)
+        for k, v in head_inputs.items():
+            if isinstance(v, torch.Tensor):
+                head_inputs[k] = v.to(device)
+
+        num_frames = torch.tensor([len(m.frames_indices) for m in metadata], device=device)
+
+        k_preds, seg_preds = self._predict_heads(head_inputs, video_mask, num_frames)
+
+        messages_with_hint = self._inject_segment_prompt(messages, k_preds)
+
+        gen_inputs, _ = processor.apply_chat_template(
+            messages_with_hint,
+            tokenize=True,
+            padding=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+            return_metadata=False,
+            videos_kwargs=videos_kwargs,
+        )
+
+        for k, v in gen_inputs.items():
+            if isinstance(v, torch.Tensor):
+                gen_inputs[k] = v.to(device)
+
+        generated_ids = self.qwen3vlmodel.generate(**gen_inputs, **generate_kwargs)
+
+        if not return_text:
+            return dict(generated_ids=generated_ids, k_preds=k_preds, seg_preds=seg_preds)
+
+        trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(gen_inputs["input_ids"], generated_ids)]
+        decoded = processor.batch_decode(
+            trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+
+        frame_boundaries = [torch.nonzero(mask, as_tuple=False).squeeze(-1).tolist() for mask in seg_preds]
+
+        if append_boundaries:
+            decoded = [f"{text.strip()}\nPredicted frame boundaries: {bounds}" for text, bounds in zip(decoded, frame_boundaries)]
+
+        return dict(
+            text=decoded,
+            generated_ids=generated_ids,
+            k_preds=k_preds,
+            seg_preds=seg_preds,
+            frame_boundaries=frame_boundaries,
+        )
 
     def top_k_mask(self, s: torch.Tensor, k: int) -> torch.Tensor:
         """

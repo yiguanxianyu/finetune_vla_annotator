@@ -20,9 +20,10 @@ from scipy.ndimage import gaussian_filter1d
 from torch.utils.data import DataLoader, Dataset
 from torchcodec.decoders import VideoDecoder
 from tqdm import tqdm
-from transformers import AutoProcessor
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.processing_utils import VideosKwargs
+
+from transformers import AutoProcessor
 
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant that help people exactly find the action segments in the video."
 DEFAULT_USER_INSTRUCTION = "Describe this video in json format. Ensure that the segments are non-overlapping and cover the entire video from start to end."
@@ -97,6 +98,7 @@ class ActionSample:
 
 def build_collator_text_only(processor, args=None):
     im_start_id = processor.tokenizer.convert_tokens_to_ids("<|im_start|>")
+    pad_token_id = processor.tokenizer.pad_token_id
     fps = None
     _sample_frames = 8
 
@@ -129,7 +131,8 @@ def build_collator_text_only(processor, args=None):
             videos_kwargs=video_kwargs,
         )
         # 遮盖输入部分
-        text_label = inputs_lm["input_ids"].clone()
+        labels = inputs_lm["input_ids"].clone()
+        labels[labels == pad_token_id] = -100
 
         for b in range(len(batch)):
             # 找到当前样本中所有 im_start_id 的位置索引
@@ -138,9 +141,10 @@ def build_collator_text_only(processor, args=None):
             # Mask 掉从开头到 answer_start 之前的所有内容
             # 注意：这里 +1 是因为通常希望模型从 im_start_id 的下一个词开始预测
             answer_start = start_indices[-1] + 1
-            text_label[b, :answer_start] = -100
+            labels[b, :answer_start] = -100
 
-        return inputs_lm, text_label
+        inputs_lm.data["labels"] = labels
+        return inputs_lm
 
     return collator
 
@@ -429,7 +433,7 @@ def build_dataloader(
     shuffle: bool = False,
     num_workers: int = 0,
 ) -> DataLoader:
-    dataset = VideoActionDataset(dataset_root=dataset_root, max_samples=64)
+    dataset = VideoActionDataset(dataset_root=dataset_root, max_samples=64, split="train")
 
     return DataLoader(
         dataset,
