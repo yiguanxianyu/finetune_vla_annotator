@@ -117,7 +117,7 @@ class RewardModel(nn.Module):
 
     def forward(self, predictions, references):
         bertscore_results = self.BERTScoreReward(predictions, references)["f1"]
-        boundary_dice = self.boundary_reward.boundary_to_segment(predictions)
+        boundary_dice = self.boundary_reward(predictions, references)
         segment_exp_rewards = self.segment_exp_reward(predictions, references)
         # segment_quadratic_rewards = self.segment_quadratic_reward(predictions, references)
         json_rewards = self.json_reward(predictions)
