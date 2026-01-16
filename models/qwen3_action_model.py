@@ -277,7 +277,10 @@ class ActionSegmentationModel(PreTrainedModel):
         frame_boundaries = [torch.nonzero(mask, as_tuple=False).squeeze(-1).tolist() for mask in seg_preds]
 
         if append_boundaries:
-            decoded = [f"{text.strip()}\nPredicted frame boundaries: {bounds}" for text, bounds in zip(decoded, frame_boundaries)]
+            decoded = [
+                f"{text.strip()}\nPredicted frame boundaries: {bounds}"
+                for text, bounds in zip(decoded, frame_boundaries)
+            ]
 
         return dict(
             text=decoded,

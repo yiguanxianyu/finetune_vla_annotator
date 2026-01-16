@@ -50,7 +50,13 @@ def compute_metrics(eval_pred):
     k_sse = ((k_pred - k_label) ** 2).mean().item() ** 0.5
     seg_acc = np.mean(seg_pred == seg_label)
 
-    return {"loss_text": loss_text, "loss_bound": loss_bound, "loss_K": loss_K, "k_sse": k_sse, "seg_acc": seg_acc}
+    return {
+        "loss_text": loss_text,
+        "loss_bound": loss_bound,
+        "loss_K": loss_K,
+        "k_sse": k_sse,
+        "seg_acc": seg_acc,
+    }
 
 
 def preprocess_logits_for_metrics(logits, labels):

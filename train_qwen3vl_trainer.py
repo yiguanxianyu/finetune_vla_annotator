@@ -20,7 +20,7 @@ def build_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default="output/qwen3vl_2B")
     parser.add_argument("--data_root", type=str, default="/mnt/e/observations_sub", help="Dataset root")
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--num_epochs", type=int, default=20)
     parser.add_argument("--logging_steps", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=100)

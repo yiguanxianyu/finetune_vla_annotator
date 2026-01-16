@@ -55,7 +55,10 @@ class ActionSample:
     @cached_property
     def _system_messages(self) -> List[Dict[str, Any]]:
         return [
-            {"role": "system", "content": [{"type": "text", "text": self.system_prompt}]},
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": self.system_prompt}],
+            },
             {
                 "role": "user",
                 "content": [
